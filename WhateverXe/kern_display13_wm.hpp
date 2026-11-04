@@ -288,12 +288,19 @@ inline TriggerSurfaces triggerSurfaces(const TriggerPacket *packets,uint32_t cou
 // These linear RGB/cursor WM and PIPE_WM_LINETIME equations do not consume
 // CDCLK. An unchanged hardware-verified plan is valid at another clock when
 // every consumer still fits its bandwidth. A clock request alone is no proof.
+// nativeHz is twice CDCLK. A pipe's own clock stays within CDCLK. A pipe scaler
+// charges its primary and cursor the downscale on top; the native
+// AppleIntelScaler::isSupportedByScaler admits such a mode up to nativeHz, which
+// is the two pixels per CDCLK of i915's intel_crtc_compute_min_cdclk.
+// Judge each consumer on its own: a cursor's plan is rebuilt only when the cursor
+// changes, so back at native size it can still carry the scaled rate. Its programmed
+// values are then the conservative ones, and refusing them would fault the owner.
 inline bool clockFits(const Snapshot &s,uint64_t nativeHz) {
-    return s.primary && s.primary->status==Status::Complete && nativeHz &&
-        s.primary->pixelHz && s.primary->pixelHz<=nativeHz/2 && s.pipePixelHz &&
+    if(!s.primary || !s.pipePixelHz)return false;
+    const auto fits=[&](uint64_t hz) {return hz && hz<=(hz>s.pipePixelHz ? nativeHz : nativeHz/2);};
+    return s.primary->status==Status::Complete && nativeHz && fits(s.primary->pixelHz) &&
         s.pipePixelHz<=nativeHz/2 && s.pipeLineTime==pipeLineTime(s.primary->htotal,s.pipePixelHz) &&
-        (!s.cursorActive || (s.cursor && s.cursor->status==Status::Complete &&
-            s.cursor->pixelHz && s.cursor->pixelHz<=nativeHz/2));
+        (!s.cursorActive || (s.cursor && s.cursor->status==Status::Complete && fits(s.cursor->pixelHz)));
 }
 enum class LatchCheck : uint32_t {None,Controls,OtherPlane,DSB,Clock,Registers,Live,Frame,AwaitingScanout,AwaitingFlip};
 struct Latch {

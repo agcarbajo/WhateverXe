@@ -316,9 +316,26 @@ int main() {
     assert(!clockFits(clockPlan,296999999));
     auto fasterCursor=cursor;fasterCursor.pixelHz=200000000;
     auto cursorClockPlan=committed.snapshot(p,&fasterCursor);
+    // A cursor rate above the pipe's comes from the pipe scaler: limited by twice CDCLK, on its own.
+    assert(clockFits(cursorClockPlan,297000000) && !clockFits(cursorClockPlan,296999999));
+    fasterCursor.pixelHz=400000000;
     assert(clockFits(cursorClockPlan,400000000) && !clockFits(cursorClockPlan,399999999));
     clockPlan.pipePixelHz=200000000;clockPlan.pipeLineTime=pipeLineTime(p.htotal,clockPlan.pipePixelHz);
     assert(!clockFits(clockPlan,384000000));
+    // Behind a pipe scaler the primary and cursor rates may reach twice CDCLK, the pipe's own clock still CDCLK.
+    auto scaledPrimary=p;scaledPrimary.pixelHz=784000000;
+    auto scaledCursor=cursor;scaledCursor.pixelHz=784000000;
+    auto scaledPlan=committed.snapshot(scaledPrimary,&scaledCursor);
+    scaledPlan.pipePixelHz=441050000;scaledPlan.pipeLineTime=pipeLineTime(scaledPrimary.htotal,scaledPlan.pipePixelHz);
+    assert(clockFits(scaledPlan,1305600000) && clockFits(scaledPlan,882100000) && !clockFits(scaledPlan,882099999));
+    scaledCursor.pixelHz=1400000000;
+    assert(!clockFits(scaledPlan,1305600000));
+    // Back at native size the cursor's plan still carries the scaled rate until the cursor changes.
+    auto nativePrimary=p;nativePrimary.pixelHz=441050000;
+    auto staleCursor=cursor;staleCursor.pixelHz=784000000;
+    auto backPlan=committed.snapshot(nativePrimary,&staleCursor);
+    backPlan.pipePixelHz=441050000;backPlan.pipeLineTime=pipeLineTime(nativePrimary.htotal,backPlan.pipePixelHz);
+    assert(clockFits(backPlan,1305600000) && !clockFits(backPlan,784000000-1));
     LatchIO afterCrawl(p);afterCrawl.clock=1305600000;
     assert(latch(afterCrawl,afterCrawl.snapshot(p)).status==Status::Complete && afterCrawl.writes.empty());
     LatchIO sameFrame(p);sameFrame.frozen=true;
