@@ -10075,6 +10075,10 @@ bool XE::enableDisplay13EngineLocked(void *power) {
 		!c.bridge.state.suspended && acquired.status==Display13Power::Status::Complete && clockReady && !c.clockFaulted && clock.status==Display13Clock::Status::Complete &&
 		Display13Power::objectAssociations(power,0x80,c.controller,0x1C20)) {
 		Display13FBDBUFIO io {c.map};
+		// -wex-hidpi-dbuf: a cursor behind the pipe scaler is charged the downscale. At 180 Hz
+		// its SAGV watermark needs up to 78 blocks (3200x1800, 256 wide); with the native 40
+		// the plan has none, and program() would fault the watermark owner for good.
+		if(checkKernelArgument("-wex-hidpi-dbuf"))c.dbuf.cursorBlocks=96;
 		status=Display13DBUF::begin(io,c.dbuf,__builtin_popcount(callbackXE->adlnOutputWiring.selected())>=3 ? 7U : 0U,c.transcoders);
 		if(status==Display13DBUF::Status::Complete) {
 			if(acquired.status==Display13Power::Status::Complete)status=Display13DBUF::resumeEngine(io,c.dbuf);
@@ -10503,6 +10507,21 @@ void XE::wrapAlderLakeNPlanarDBUFWrite(void *access,uint64_t reg,uint32_t value)
 	uint64_t record[14] {2,reg,value};auto status=Display13DBUF::Status::Unavailable;
 	auto path=Display13FBMemory::singlePath<OSObject *>(fb);
 	auto plane=path && path->getMetaClass()->getClassSize()>=0x3730 ? Display13FBMemory::field<OSObject *>(path,0x32C8) : nullptr;
+	// -wex-hidpi-dbuf: this donor helper also writes the initial RGB allocation, split a
+	// third/two thirds as for planar YUV and past a fixed 40-block cursor prefix. At native
+	// size the layout setup replaces it later, but in a pipe-scaled mode it runs last and
+	// the primary underruns on motion (retropineaple, 9d28483, single-pipe layout only).
+	// Give an RGB primary the allocation this pipe is planned to have.
+	if(c.dbuf.cursorBlocks!=40 && plane && plane->getMetaClass()->getClassSize()>=0x1C8 &&
+		Display13WM::supportedRGBControl(Display13FBMemory::field<uint32_t>(plane,0x100)) &&
+		Display13FBMemory::field<uint32_t>(plane,0x10C)==value) {
+		const auto planned=Display13DBUF::plannedLayout(c.dbuf.capacity ? c.dbuf.capacity : c.dbuf.selected,pipe,c.dbuf.cursorBlocks);
+		const auto wanted=planned.status==Display13DBUF::Status::Complete ? Display13DBUF::hardwareRaw(c.dbuf,pipe,planned.primary) : UINT32_MAX;
+		if(wanted!=UINT32_MAX && wanted && wanted!=value) {
+			record[2]=value|(uint64_t(wanted)<<32);
+			*reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(plane)+0x10C)=wanted;value=wanted;
+		}
+	}
 	const auto binding=adlnInspectPathBinding(fb,path,callbackXE->adlnPlatform,callbackXE->adlnOutputWiring);
 	const bool associated=plane && binding.status==TGLFBBinding::Status::Complete && binding.pipe==pipe &&
 		Display13FBMemory::boundPipe(c.pipe,fb)==pipe && Display13FBMemory::field<void *>(plane,0x90)==access && access==c.access &&

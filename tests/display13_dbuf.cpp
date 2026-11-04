@@ -116,6 +116,11 @@ int main() {
     assert(hardwareRaw(address,1,splitB.primary)==0x03FF0028);
     assert(hardwareRaw(address,2,splitC.primary)==0x07FF0428);
     assert(hardwareRaw(address,2,splitC.cursor)==0x04270400);
+    // A larger cursor prefix moves the primary start and nothing else.
+    const auto wideA=plannedLayout(7,0,96),wideB=plannedLayout(7,1,96),wideC=plannedLayout(7,2,96);
+    assert(wideA.primary.start==96 && wideA.primary.end==2048 && !wideA.cursor.start && wideA.cursor.end==96);
+    assert(wideB.primary.start==2144 && wideB.primary.end==3072 && wideB.cursor.start==2048 && wideB.cursor.end==2144);
+    assert(wideC.primary.start==3168 && wideC.primary.end==4096 && wideC.cursor.start==3072 && wideC.cursor.end==3168);
     address.joined=true;
     assert(hardwareRaw(address,0,{0,4096})==0x0FFF0000);
     assert(hardwareRaw(address,1,globalB)==UINT32_MAX);

@@ -41,6 +41,7 @@ struct State {
     uint32_t selected {},updating {},unretired {}; // Updating is a per-pipe transaction mask.
     uint32_t restorePending {}; // Retained allocations whose hardware was lost in system sleep.
     uint32_t creditSaved {},credit[3] {}; // Writable MBUS fetch-credit fields of selected, powered pipes.
+    uint32_t cursorBlocks {40}; // Cursor prefix of every planned layout; set once, before begin().
 };
 inline Status fail(State &s,Status status) {s.faulted=true;return status;}
 inline uint32_t tracked(const State &s) {
@@ -111,12 +112,12 @@ struct Layout {Status status {Status::Unavailable};Range primary,cursor;bool act
 struct AllocationPlan {Status status {Status::Topology};Range primary,cursor;};
 // ADLP allowed DBUF table: A uses S0/1; B/C share S2/3. Split that bank
 // when both paths are selected; native programming/ACK must establish it.
-inline AllocationPlan plannedLayout(uint32_t pipes,unsigned p) {
+inline AllocationPlan plannedLayout(uint32_t pipes,unsigned p,uint32_t cursorBlocks=40) {
     AllocationPlan r;
     if(!pipes || (pipes&~7U) || p>=3 || !(pipes&(1U<<p)))return r;
     const uint32_t start=p==0 ? 0 : p==2 && (pipes&2) ? 3072 : 2048;
     const uint32_t end=p==0 ? 2048 : p==1 && (pipes&4) ? 3072 : 4096;
-    r.primary={start+40,end};r.cursor={start,start+40};r.status=Status::Complete;return r;
+    r.primary={start+cursorBlocks,end};r.cursor={start,start+cursorBlocks};r.status=Status::Complete;return r;
 }
 // ADL-P/N unjoined pipe A owns S0/S1. Keep the native 40-block cursor prefix
 // and give the only RGB primary the remaining 2008 blocks. Default and optimized
@@ -150,7 +151,7 @@ template<class IO> Layout singlePipeLayout(IO &io,const State &s) {
     // The native cursor setup uses this same reservation. Moving a different
     // existing reservation is a separate two-consumer relocation operation.
     if(cursor && cursor!=(39U<<16)) {r.status=Status::Range;return r;}
-    r.primary={40,2048};r.cursor={0,40};r.status=Status::Complete;return r;
+    r.primary={s.cursorBlocks,2048};r.cursor={0,s.cursorBlocks};r.status=Status::Complete;return r;
 }
 // Qualified multi-pipe layout query. The caller binds each real FB/path and
 // proves an initially stopped bank before adding it to selected. This is a
@@ -181,7 +182,7 @@ template<class IO> Layout pipeLayout(IO &io,const State &s,unsigned index) {
     if(!hardwareMatches(io,s,index,a.primary,a.cursor)) {
         r.status=Status::Conflict;return r;
     }
-    const auto planned=plannedLayout(s.capacity ? s.capacity : s.selected,index);
+    const auto planned=plannedLayout(s.capacity ? s.capacity : s.selected,index,s.cursorBlocks);
     if(planned.status!=Status::Complete || overlap(planned.primary,planned.cursor) ||
        overlapsOther(s,index,planned.primary) || overlapsOther(s,index,planned.cursor)) {r.status=Status::Range;return r;}
     const auto cursor=io.read(0x70080+bank);
@@ -549,7 +550,7 @@ template<class IO> Status prepareCursor(IO &io,State &s,unsigned index=0) {
     const auto bit=1U<<index,bank=0x1000*index;auto &a=s.pipe[index];
     if(s.updating&bit)return fail(s,Status::Conflict);
     if(!Display13FBIRQ::powered(io.read(0x45404),index))return fail(s,Status::Power);
-    const auto layout=plannedLayout(s.capacity ? s.capacity : s.selected,index);
+    const auto layout=plannedLayout(s.capacity ? s.capacity : s.selected,index,s.cursorBlocks);
     if(layout.status!=Status::Complete)return fail(s,layout.status);
     const auto next=layout.cursor;const auto raw=hardwareRaw(s,index,next),cursorRaw=hardwareRaw(s,index,a.cursor);
     if(!hardwareMatches(io,s,index,a.primary,a.cursor))return fail(s,Status::Conflict);
