@@ -192,6 +192,11 @@ inline Level transition(Level wm0,uint32_t allocation,bool ipc,uint32_t yTileMin
     if(blocks>4095 || minimum>allocation)return l;
     l.blocks=blocks;l.minimum=minimum;l.enable=true;return l;
 }
+// The native rate of a primary multiplies the pipe scaler's ratio by its plane scaler's. A plane scaler
+// left on by an earlier partial modeset, behind a pipe scaler already scaling, would count the downscale
+// twice: 3403 MHz for 3200x1800 at 180 Hz. level() gives up at 2 GHz and the owner would fault for good,
+// and with it every output that has not started yet. No plane fetches above twice CDCLK: plan for that.
+inline uint64_t planePixelHz(uint64_t adjusted,uint64_t nativeHz) {return nativeHz && adjusted>nativeHz ? nativeHz : adjusted;}
 inline Plan plan(uint32_t width,uint32_t htotal,uint64_t pixelHz,uint32_t allocation,const Latency &latency,bool ipc,bool yTiled=false,uint32_t height=0) {
     Plan p;p.height=height;p.width=width;p.htotal=htotal;p.pixelHz=pixelHz;p.allocation=allocation;p.yTiled=yTiled;
     if(latency.status!=Status::Complete)return p;

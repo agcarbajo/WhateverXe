@@ -336,6 +336,17 @@ int main() {
     auto backPlan=committed.snapshot(nativePrimary,&staleCursor);
     backPlan.pipePixelHz=441050000;backPlan.pipeLineTime=pipeLineTime(nativePrimary.htotal,backPlan.pipePixelHz);
     assert(clockFits(backPlan,1305600000) && !clockFits(backPlan,784000000-1));
+    // A plane scaler left on behind the pipe scaler counts the downscale twice:
+    // above level()'s limit the plan fails and the owner would fault; at twice CDCLK it holds, and fits.
+    const uint64_t doubled=uint64_t(441050000)*25/9*25/9;
+    assert(doubled>2000000000ULL && plan(3200,2080,doubled,1952,latency,false,true,1800).status==Status::WM0);
+    assert(planePixelHz(doubled,1305600000)==1305600000 && planePixelHz(1225138888,1305600000)==1225138888);
+    assert(planePixelHz(doubled,0)==doubled);
+    auto heldPrimary=plan(3200,2080,planePixelHz(doubled,1305600000),1952,latency,false,true,1800);
+    assert(heldPrimary.status==Status::Complete && heldPrimary.sagv.enable);
+    auto heldPlan=committed.snapshot(heldPrimary,nullptr);
+    heldPlan.pipePixelHz=441050000;heldPlan.pipeLineTime=pipeLineTime(heldPrimary.htotal,heldPlan.pipePixelHz);
+    assert(clockFits(heldPlan,1305600000));
     LatchIO afterCrawl(p);afterCrawl.clock=1305600000;
     assert(latch(afterCrawl,afterCrawl.snapshot(p)).status==Status::Complete && afterCrawl.writes.empty());
     LatchIO sameFrame(p);sameFrame.frozen=true;

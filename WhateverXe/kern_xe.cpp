@@ -9459,7 +9459,7 @@ void XE::adlnWMSetup(OSObject *plane,OSObject *path,bool cursor) {
 			// Audited native pixel/scaling calculation is CPU-only. Preserve its
 			// path frequency and downscale behavior rather than assuming FHD Hz.
 			auto adjust=reinterpret_cast<uint64_t (*)(void *,void *,void *,bool,void *)>(callbackXE->adlnAdjustPixelClock);
-			const auto pixel=adjust(c.controller,fb,path,cursor,nullptr);
+			const auto pixel=Display13WM::planePixelHz(adjust(c.controller,fb,path,cursor,nullptr),c.clock.nativeHz());
 			p=Display13WM::plan(width,htotal,pixel,range.end-range.start,c.latency,(ipc&8) || Display13FBMemory::field<uint8_t>(c.controller,0x1B4C),yTiled,cursor ? width : ((Display13FBMemory::field<uint32_t>(plane,0x11C)>>16)&0x1FFF)+1);
 			if(p.status==Display13WM::Status::Complete) {
 				auto object=reinterpret_cast<uint8_t *>(plane);

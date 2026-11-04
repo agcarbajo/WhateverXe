@@ -28,6 +28,7 @@ struct Power {
  bool engineEnabled{},clockFaulted{},memoryFaulted{},watermarkFaulted{};
  struct {struct {bool faulted{};}state;}bridge;
  Display13DBUF::State dbuf;Display13WM::Latency latency;Pipe pipe[3];
+ struct {uint64_t nativeHz() const {return 1305600000;}} clock;
 }display13FBPower;
 struct IORegistryEntry {
  std::map<std::string,std::vector<uint8_t>> records;
