@@ -297,6 +297,11 @@ int main() {
     assert(!apertureRange(qualified.pool,0,0,0x10000000));
     assert(!apertureRange(qualified.pool,1,4096,0x10000000));
     assert(!apertureRange(qualified.pool,0,0x3000001,0x10000000));
+    // Width x height x 4 of a scaled desktop, not whole pages: 2880x1620, 1440x900, and a page-rounded end inside the pool.
+    assert(apertureRange(qualified.pool,0,0x11CC400,0x10000000));
+    assert(apertureRange(qualified.pool,0,0x57E400,0x10000000));
+    assert(apertureRange(qualified.pool,0,0x2FFFC00,0x10000000));
+    assert(!apertureRange(qualified.pool,0x2FFF000,0x1001,0x10000000));
     assert(!apertureRange(qualified.pool,0x3000000,4096,0x10000000));
     assert(!apertureRange(qualified.pool,0,0x800000,0x400000));
     Fixture accelerator;put(accelerator.controller,0xC0,uintptr_t(1));

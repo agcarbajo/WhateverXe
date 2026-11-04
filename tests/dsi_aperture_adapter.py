@@ -48,7 +48,7 @@ int main(){
   put(&controller,0x1A28,uint64_t(0x80000000));put(&controller,0x1A30,0x800000U);put(&controller,0x1A34,0x800U);
   put(&controller,0xC80,&parent);c.pipe[0].memory.pool=pool(&controller);
   pending=problem!=0;target=true;
-  switch(problem){case 2:put(&fb,0x4314,1U);break;case 3:put(&fb,0x4330,1U);break;
+  switch(problem){case 2:put(&fb,0x4314,0x800001U);break;case 3:put(&fb,0x4330,1U);break;
    case 4:c.pipe[0].memory.pool.pages++;break;case 5:target=false;break;case 6:xe.dsiStopAttempted=true;break;}
   assert(!xe.wrapAlderLakeNAperture(&fb,0) && !depth && parent.refs==1);
   assert(c.memoryFaulted==(problem>=2));
