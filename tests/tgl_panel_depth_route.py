@@ -28,6 +28,7 @@ start=s.index('uint32_t XE::tglPanelDepthPort(')
 end=s.index('uint32_t XE::wrapTGLPortDDC(',start)
 code=r'''
 #include "kern_tgl_panel_depth.hpp"
+#include "kern_edp_boot_depth.hpp"
 #include "kern_alderlake_s.hpp"
 #include "kern_display13_fb_topology.hpp"
 #include <cassert>
@@ -35,8 +36,8 @@ code=r'''
 #include <cstdio>
 using mach_vm_address_t=uintptr_t;
 
-unsigned calls=0,published=0;uint64_t record[5];
-struct Root {void setProperty(const char *,void *p,size_t n){assert(n==40);memcpy(record,p,n);++published;}} root;
+unsigned calls=0,published=0,applied=0;uint64_t record[5];
+struct Root {void setProperty(const char *,void *p,size_t n){if(n==8){++applied;return;}assert(n==40);memcpy(record,p,n);++published;}} root;
 struct IORegistryEntry {static Root *getRegistryRoot(){return &root;}};
 void *tglAUXLock=&root;
 void IOSimpleLockLock(void *){} void IOSimpleLockUnlock(void *){}
@@ -56,6 +57,7 @@ struct XE {
 } state,*callbackXE=&state;
 struct TGLPanelDepthCache {void *port;uint32_t maximum;};
 TGLPanelDepthCache tglPanelDepthCache[2];
+EDPBootDepth edpBootDepth;uint32_t edpBootDepthApplied[2];
 #define FunctionCast(f,p) reinterpret_cast<decltype(&f)>(p)
 PRODUCTION
 void native(void *,void *,void *){++calls;}
@@ -90,6 +92,22 @@ int main(){
  XE::wrapTGLModeTiming(nullptr,fb,timing);assert(published==before+1 && *reinterpret_cast<uint16_t*>(timing+0x8A)==1);
  state.adlsWiring.panel=0;put(timing,0x8A,uint16_t(2));before=published;
  XE::wrapTGLModeTiming(nullptr,fb,timing);assert(published==before && *reinterpret_cast<uint16_t*>(timing+0x8A)==2);
+ // msi-e16flip: the firmware 6 bpc eDP timing (2560x1600, totals 2720x1732) is
+ // requested at 6 bpc after the EDID clamp; the 60 Hz base timing keeps 8 bpc.
+ state.adlsDisplaySelected=false;state.xeProfile.family=XELP::Family::TigerLake;
+ cfg[0]=cfg[2]=cfg[3]=0;put(port,0x548,static_cast<void*>(cfg));tglPanelDepthCache[0]={port,8};
+ assert(!applied && !edpBootDepthApplied[1]);
+ edpBootDepth=EDPBootDepth::capture(0x8A200106,0x0A9F09FF,0x06C3063F,1);assert(edpBootDepth.valid);
+ put(timing,0x40,uint32_t(2560));put(timing,0x44,uint32_t(160));put(timing,0x50,uint32_t(1600));put(timing,0x54,uint32_t(132));
+ put(timing,0x88,uint16_t(1));put(timing,0x8A,uint16_t(2));before=published;
+ XE::wrapTGLModeTiming(nullptr,fb,timing);
+ assert(published==before+1 && applied==1 && edpBootDepthApplied[1]==1 && *reinterpret_cast<uint16_t*>(timing+0x8A)==1);
+ put(timing,0x54,uint32_t(2380));put(timing,0x8A,uint16_t(2));before=published;
+ XE::wrapTGLModeTiming(nullptr,fb,timing);
+ assert(published==before+1 && applied==1 && *reinterpret_cast<uint16_t*>(timing+0x8A)==2);
+ // A foreign framebuffer never reaches the depth request.
+ put(timing,0x54,uint32_t(132));put(timing,0x8A,uint16_t(2));put(port,0x578,static_cast<void*>(nullptr));
+ XE::wrapTGLModeTiming(nullptr,fb,timing);assert(applied==1 && *reinterpret_cast<uint16_t*>(timing+0x8A)==2);
  puts("PASS: production owner/port guards and unused-controller argument");
 }
 '''.replace('PRODUCTION',s[start:end])

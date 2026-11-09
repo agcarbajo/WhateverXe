@@ -17720,6 +17720,20 @@ void XE::wrapTGLModeTiming(void *controller,void *fb,void *timing) {
  IORegistryEntry::getRegistryRoot()->setProperty("TGLPanelDepthLast",record,sizeof(record));
 }
 
+uint32_t XE::wrapTGLPortDDC(void *port, uint32_t block, uint8_t *data, bool force) {
+	auto cfg = *reinterpret_cast<uint32_t **>(static_cast<uint8_t *>(port) + 0x548);
+	auto id = cfg ? cfg[0] : 9;
+	tglTrace(1, id, false, block, force, 0, 0);
+	const auto r = FunctionCast(wrapTGLPortDDC, callbackXE->orgTGLPortDDC)(port, block, data, force);
+	tglTrace(1, id, true, block, force, r, 0);
+	cachePanelDepth(port,block,data,r);
+	if (r == 0 && data && (block == 1 || block == 2)) {
+		char key[40]; snprintf(key, sizeof(key), "TGLWEGPort%uDDC%s", id, block == 1 ? "Base" : "Extension");
+		IORegistryEntry::getRegistryRoot()->setProperty(key, data, 128);
+	}
+	return r;
+}
+
 // msi-e16flip: IOFBDisplayModeDescription (0xCC) carries its V2 timing at +0x2C.
 // Request the firmware's proven 6 bpc for that exact eDP timing before AGDC validates it.
 IOReturn XE::wrapTGLValidateTiming(void *fb,void *description,unsigned long long size) {
@@ -17736,19 +17750,6 @@ IOReturn XE::wrapTGLValidateTiming(void *fb,void *description,unsigned long long
  return FunctionCast(wrapTGLValidateTiming,callbackXE->orgTGLValidateTiming)(fb,description,size);
 }
 
-uint32_t XE::wrapTGLPortDDC(void *port, uint32_t block, uint8_t *data, bool force) {
-	auto cfg = *reinterpret_cast<uint32_t **>(static_cast<uint8_t *>(port) + 0x548);
-	auto id = cfg ? cfg[0] : 9;
-	tglTrace(1, id, false, block, force, 0, 0);
-	const auto r = FunctionCast(wrapTGLPortDDC, callbackXE->orgTGLPortDDC)(port, block, data, force);
-	tglTrace(1, id, true, block, force, r, 0);
-	cachePanelDepth(port,block,data,r);
-	if (r == 0 && data && (block == 1 || block == 2)) {
-		char key[40]; snprintf(key, sizeof(key), "TGLWEGPort%uDDC%s", id, block == 1 ? "Base" : "Extension");
-		IORegistryEntry::getRegistryRoot()->setProperty(key, data, 128);
-	}
-	return r;
-}
 
 uint32_t XE::wrapTGLStreamEDID(void *controller, void *request, void *output) {
 	auto req = static_cast<uint32_t *>(request);
