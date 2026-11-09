@@ -56,6 +56,7 @@
 #include "kern_adls_boot.hpp"
 #include "kern_tgl_combo_signal.hpp"
 #include "kern_tgl_panel_depth.hpp"
+#include "kern_edp_boot_depth.hpp"
 #include "kern_xelp_panel_power.hpp"
 #include "kern_display13_panel.hpp"
 #include "kern_tgl_pcode_gate.hpp"
@@ -255,6 +256,9 @@ static bool xelpDisplay13Device(IOPCIDevice *pci) {
 }
 // Detailed read-only display evidence is opt-in; control and first-fault
 // receipts remain active in the ordinary AlderLakeN profile.
+// msi-e16flip: firmware eDP timing proven at 6 bpc (-wex-edp-boot-depth); [validate, modeset] hits.
+static EDPBootDepth edpBootDepth;
+static uint32_t edpBootDepthApplied[2];
 static bool display13TraceEnabled;
 static bool display13Offline;
 static XELPMemory::Layout xelpMemory;
@@ -4118,6 +4122,17 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 		connector[5]=bootDDI;pci->setProperty("N97NativeBootConnector",connector,sizeof(connector));
 	}
 	pci->setProperty("N97DisplayReadoutStatus", static_cast<uint32_t>(result.status), 32);
+    if(displayRequested && board.panel && checkKernelArgument("-wex-edp-boot-depth")) {
+        uint32_t trans=0,htotal=0,vtotal=0;
+        if(result.status==AlderLakeN::ReadoutStatus::Complete && result.activePipes==1 &&
+           AlderLakeN::value(result,0x60400,trans) && AlderLakeN::value(result,0x60000,htotal) &&
+           AlderLakeN::value(result,0x6000C,vtotal))
+            edpBootDepth=EDPBootDepth::capture(trans,htotal,vtotal,board.panel);
+        uint32_t proof[]={1,edpBootDepth.valid,edpBootDepth.hActive,edpBootDepth.hTotal,edpBootDepth.vActive,edpBootDepth.vTotal};
+        pci->setProperty("WEXEDPBootDepth",proof,sizeof(proof));
+        SYSLOG("igfx","eDP boot depth valid=%u %ux%u total %ux%u",edpBootDepth.valid,
+            edpBootDepth.hActive,edpBootDepth.vActive,edpBootDepth.hTotal,edpBootDepth.vTotal);
+    }
 	SYSLOG("igfx", "AlderLakeN Display13 readout status=%u powered=%x active=%x hdmiB=%x; donor blocked",
 		static_cast<uint32_t>(result.status), result.poweredPipes, result.activePipes, result.hdmiBPipes);
 	// Mobile and TC configurations adopt a validated firmware surface at
@@ -13739,6 +13754,20 @@ void XE::processNativePanel(KernelPatcher &patcher,size_t index,mach_vm_address_
 				patcher.clearError();
 			}
 
+			if (tglActive && tglPanelDepthReady && checkKernelArgument("-wex-edp-boot-depth")) {
+				// msi-e16flip: offer the firmware 6 bpc eDP timing to AGDC validation.
+				const char *symbol="__ZN21AppleIntelFramebuffer22validateDetailedTimingEPvy";
+				const uint8_t entry[]={0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,
+					0x48,0x81,0xEC,0xC8,0x00,0x00,0x00,0x48,0x89,0xD1,0x49,0x89,0xF5,0x49,0x89,0xFE};
+				const auto target=patcher.solveSymbol(index,symbol,address,size);
+				const bool known=size>0x30A32 && target==address+0x2FFCA &&
+					!memcmp(reinterpret_cast<void *>(target),entry,sizeof(entry));
+				KernelPatcher::RouteRequest route(symbol,wrapTGLValidateTiming,orgTGLValidateTiming);
+				tglValidateTimingReady=known && patcher.routeMultiple(index,&route,1,address,size);
+				IORegistryEntry::getRegistryRoot()->setProperty("WEXEDPValidateTimingReady",tglValidateTimingReady);
+				patcher.clearError();
+			}
+
    if(tglActive) {
     // PANEL_TIMING_INSTALL: exact property writer and its native consumer.
     const char *symbol="__ZN31AppleIntelFramebufferController26hwGetPanelTimingPropertiesEv";
@@ -17683,8 +17712,28 @@ void XE::wrapTGLModeTiming(void *controller,void *fb,void *timing) {
  auto &depth=*reinterpret_cast<uint16_t *>(t+0x8A);
  const auto before=depth;
  depth=TGLPanelDepth::clamp(encoding,before,maximum);
+ if(edpBootDepth.apply(t)) {
+  ++edpBootDepthApplied[1];
+  IORegistryEntry::getRegistryRoot()->setProperty("WEXEDPBootDepthApplied",edpBootDepthApplied,sizeof(edpBootDepthApplied));
+ }
  uint64_t record[]={ddi,maximum,encoding,before,depth};
  IORegistryEntry::getRegistryRoot()->setProperty("TGLPanelDepthLast",record,sizeof(record));
+}
+
+// msi-e16flip: IOFBDisplayModeDescription (0xCC) carries its V2 timing at +0x2C.
+// Request the firmware's proven 6 bpc for that exact eDP timing before AGDC validates it.
+IOReturn XE::wrapTGLValidateTiming(void *fb,void *description,unsigned long long size) {
+ auto b=static_cast<uint8_t *>(fb);auto d=static_cast<uint8_t *>(description);
+ if(b && d && size==0xCC && edpBootDepth.valid) {
+  const auto slot=*reinterpret_cast<int32_t *>(b+0x3FD8)==-1 ? 0x49F0 : 0x4A08;
+  auto path=*reinterpret_cast<uint8_t **>(b+slot);
+  auto port=path ? *reinterpret_cast<void **>(path+0x3648) : nullptr;
+  if(port && tglPanelDepthPort(port)<=1 && edpBootDepth.apply(d+0x2C)) {
+   ++edpBootDepthApplied[0];
+   IORegistryEntry::getRegistryRoot()->setProperty("WEXEDPBootDepthApplied",edpBootDepthApplied,sizeof(edpBootDepthApplied));
+  }
+ }
+ return FunctionCast(wrapTGLValidateTiming,callbackXE->orgTGLValidateTiming)(fb,description,size);
 }
 
 uint32_t XE::wrapTGLPortDDC(void *port, uint32_t block, uint8_t *data, bool force) {
