@@ -107,7 +107,7 @@ inline void panelFacts(const uint8_t *b,size_t header,size_t size,Ports &ports) 
         if(b[at]==44){duplicate|=power!=nullptr;power=block;powerSize=n;}
         at+=3+n;
     }
-    if(duplicate || !options || optionsSize<1 || options[0]>=16 ||
+    if(duplicate || !options || optionsSize<1 || (options[0]>=16 && options[0]!=0xFF) ||
        !edp || edpSize<212 || (ports.version>=232 && (!power || powerSize<56)))return;
     unsigned internal=PortCount;
     for(unsigned d=0;d<PortCount;++d)if((ports.present&(1U<<d)) &&
@@ -117,7 +117,7 @@ inline void panelFacts(const uint8_t *b,size_t header,size_t size,Ports &ports) 
     }
     if(internal==PortCount)return;
     auto &p=ports.panel;
-    p.type=options[0];p.ddi=internal;
+    p.type=options[0]==0xFF?0:options[0];p.ddi=internal; // msi-e16flip: dynamic (EDID) panel type, i915 falls back to 0
     p.lowSwing=((u64(edp+204)>>(4*p.type))&15)==0;
     p.hobl=ports.version>=232 && (u16(power+54)&(1U<<p.type));
     p.valid=true;
@@ -187,7 +187,7 @@ inline Ports parse(const void *data,size_t length,Family family) {
         if(!(type&2))continue;
         const auto d=ddi(family,c[16]);
         if(d==PortCount){++r.unmapped;continue;}
-        if(r.present&(1U<<d)){r.status=Status::Conflict;return r;}
+        if(r.present&(1U<<d))continue; // #35: keep the first child per DDI, like Linux i915
         auto &q=r.port[d];q.type=type;q.dvo=c[16];q.ddc=c[19];q.aux=c[25];q.flags=c[23];q.capabilities=c[33];q.hdmiPreset=c[7]&31;
         r.present|=1U<<d;
         if(!q.fixedTMDS())r.ambiguous|=1U<<d;

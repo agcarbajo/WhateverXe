@@ -97,7 +97,9 @@ int main(int argc,char **argv){
  for(auto p:{Port{0x60d6,1,2},Port{0x78c6,10,1},Port{0x60d2,1,2,0,4},Port{0x60d2,1,2,0,2},Port{0x60d2,1,2,0,0,1}}){
   auto b=table({p});auto q=parse(b.data(),b.size(),Family::TigerLake);assert(q.valid()&&!q.hdmi(3).hdmi);
  }
- auto dup=table({{0x60d2,1,2},{0x60d2,7,2}});assert(parse(dup.data(),dup.size(),Family::TigerLake).status==Status::Conflict);
+ // #35: like Linux i915, a second child for the same DDI is ignored; the first one wins.
+ auto dup=table({{0x60d2,1,2},{0x60d2,7,2}});
+ {auto q=parse(dup.data(),dup.size(),Family::TigerLake);assert(q.valid()&&q.present==2&&q.port[1].dvo==1&&q.hdmi(3).hdmi==2);}
  for(size_t len=0;len<bytes.size();++len)assert(!parse(bytes.data(),len,Family::TigerLake).valid());
  // An otherwise valid firmware table can carry a stale checksum. Do not
  // lose its actual connector wiring or silently normalize the source data.
@@ -111,7 +113,7 @@ int main(int argc,char **argv){
  broken=bad;broken[77]=1;
  assert(parse(broken.data(),broken.size(),Family::TigerLake).status==Status::Children);
  broken=dup;broken[26]^=0x5a;
- assert(parse(broken.data(),broken.size(),Family::TigerLake).status==Status::Conflict);
+ assert(parse(broken.data(),broken.size(),Family::TigerLake).valid());
  for(unsigned off:{22u,24u,28u,66u,68u,71u,77u}){auto b=bytes;b[off]=0xff;b[off+1]=0xff;checksum(b);assert(!parse(b.data(),b.size(),Family::TigerLake).valid());}
  for(unsigned version:{215u,257u}){auto b=bytes;w16(b,64,version);checksum(b);assert(parse(b.data(),b.size(),Family::TigerLake).status==Status::Version);}
  auto empty=table({});assert(parse(empty.data(),empty.size(),Family::TigerLake).valid());
@@ -147,7 +149,7 @@ int main(int argc,char **argv){
  }
  for(unsigned bad=0;bad<5;++bad) {
   auto b=panelTable;
-  if(bad==0)b[options]=255;
+  if(bad==0)b[options]=16;
   if(bad==1)w16(b,edp-2,211);
   if(bad==2)w16(b,power-2,55);
   if(bad==3)append(b,40,1);
@@ -155,6 +157,10 @@ int main(int argc,char **argv){
   auto q=parse(b.data(),b.size(),Family::TigerLake);
   assert(q.valid()&&q.hdmi(3).hdmi==2&&!q.panel.valid);
  }
+ // msi-e16flip: panel_type 0xFF selects the panel dynamically by EDID PnP ID.
+ // Without a PnP match Linux i915 falls back to type 0; so does the parser.
+ {auto b=panelTable;b[options]=0xFF;auto q=parse(b.data(),b.size(),Family::TigerLake);
+  assert(q.valid()&&q.panel.valid&&q.panel.type==0&&q.panel.ddi==0);}
  for(size_t n=power;n<panelTable.size();++n) {
   auto b=panelTable;b.resize(n);w16(b,24,b.size());w16(b,68,b.size()-48);
   auto q=parse(b.data(),b.size(),Family::TigerLake);

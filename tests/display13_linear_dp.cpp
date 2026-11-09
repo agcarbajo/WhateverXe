@@ -76,6 +76,17 @@ int main() {
         assert(r.status==LinearStatus::Success && dpSourceUnchanged(io,boot,pipe,ddi,0,nullptr,true));
         io.regs[0x60540+0x1000*pipe]^=64;assert(!dpSourceUnchanged(io,boot,pipe,ddi,0,nullptr,true));
     }
+    // msi-e16flip: an eDP GOP may run at 6 bpc (BPC field 2) when its native mode
+    // does not fit the link at 8 bpc. Only the panel source accepts it; an
+    // external DP source and any other depth remain rejected.
+    for(unsigned ddi=0;ddi<2;++ddi)for(unsigned bpc=1;bpc<5;++bpc) {
+        auto io=firmware(0,ddi,4,true);io.regs[0x60400]|=bpc<<20;
+        auto boot=readDisplay(io,true);LinearPlan plan;
+        assert(!dpSource(boot,0,ddi));
+        assert(dpSource(boot,0,ddi,nullptr,true)==(bpc==2));
+        assert((linearPlan(boot,plan,ddi,GOPProtocol::EDP)==LinearStatus::Ready)==(bpc==2));
+        assert(linearPlan(boot,plan,ddi,GOPProtocol::DP)==LinearStatus::InvalidDPSource);
+    }
     auto bad=firmware(0,0,4,true);bad.regs[0x60540]=0x80000000;
     auto r=reinitializeLinear(bad,readDisplay(bad,true),true,0,GOPProtocol::DP);
     assert(r.status==LinearStatus::InvalidDPSource && bad.writes.empty());
