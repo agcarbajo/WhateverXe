@@ -260,6 +260,18 @@ static bool xelpDisplay13Device(IOPCIDevice *pci) {
 static EDPBootDepth edpBootDepth;
 static uint32_t edpBootDepthApplied[2];
 static bool display13TraceEnabled;
+// Out of line: adlnBootstrap has a bounded DEBUG kernel stack frame (tools/check_boot_stack.py).
+static __attribute__((noinline)) void captureEDPBootDepth(IOPCIDevice *pci,const AlderLakeN::DisplayReadout &result,uint32_t panel) {
+    uint32_t trans=0,htotal=0,vtotal=0;
+    if(result.status==AlderLakeN::ReadoutStatus::Complete && result.activePipes==1 &&
+       AlderLakeN::value(result,0x60400,trans) && AlderLakeN::value(result,0x60000,htotal) &&
+       AlderLakeN::value(result,0x6000C,vtotal))
+        edpBootDepth=EDPBootDepth::capture(trans,htotal,vtotal,panel);
+    uint32_t proof[]={1,edpBootDepth.valid,edpBootDepth.hActive,edpBootDepth.hTotal,edpBootDepth.vActive,edpBootDepth.vTotal};
+    pci->setProperty("WEXEDPBootDepth",proof,sizeof(proof));
+    SYSLOG("igfx","eDP boot depth valid=%u %ux%u total %ux%u",edpBootDepth.valid,
+        edpBootDepth.hActive,edpBootDepth.vActive,edpBootDepth.hTotal,edpBootDepth.vTotal);
+}
 static bool display13Offline;
 static XELPMemory::Layout xelpMemory;
 static uint16_t xelpMemoryGGC;
@@ -4122,17 +4134,8 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 		connector[5]=bootDDI;pci->setProperty("N97NativeBootConnector",connector,sizeof(connector));
 	}
 	pci->setProperty("N97DisplayReadoutStatus", static_cast<uint32_t>(result.status), 32);
-    if(displayRequested && board.panel && checkKernelArgument("-wex-edp-boot-depth")) {
-        uint32_t trans=0,htotal=0,vtotal=0;
-        if(result.status==AlderLakeN::ReadoutStatus::Complete && result.activePipes==1 &&
-           AlderLakeN::value(result,0x60400,trans) && AlderLakeN::value(result,0x60000,htotal) &&
-           AlderLakeN::value(result,0x6000C,vtotal))
-            edpBootDepth=EDPBootDepth::capture(trans,htotal,vtotal,board.panel);
-        uint32_t proof[]={1,edpBootDepth.valid,edpBootDepth.hActive,edpBootDepth.hTotal,edpBootDepth.vActive,edpBootDepth.vTotal};
-        pci->setProperty("WEXEDPBootDepth",proof,sizeof(proof));
-        SYSLOG("igfx","eDP boot depth valid=%u %ux%u total %ux%u",edpBootDepth.valid,
-            edpBootDepth.hActive,edpBootDepth.vActive,edpBootDepth.hTotal,edpBootDepth.vTotal);
-    }
+    if(displayRequested && board.panel && checkKernelArgument("-wex-edp-boot-depth"))
+        captureEDPBootDepth(pci,result,board.panel);
 	SYSLOG("igfx", "AlderLakeN Display13 readout status=%u powered=%x active=%x hdmiB=%x; donor blocked",
 		static_cast<uint32_t>(result.status), result.poweredPipes, result.activePipes, result.hdmiBPipes);
 	// Mobile and TC configurations adopt a validated firmware surface at
