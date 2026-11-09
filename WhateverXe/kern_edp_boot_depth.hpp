@@ -44,4 +44,58 @@ struct EDPBootDepth {
   return true;
  }
 };
+// The firmware timing usually lives only in the panel's DisplayID extension
+// (its pixel clock exceeds the 655.35 MHz an EDID DTD can carry), and macOS
+// installs built-in panel modes from the base block alone.
+struct EDPPanelTiming {
+ bool valid {};
+ uint64_t clock {}; // Hz
+ uint32_t hBlank {},hSyncOffset {},hSyncWidth {},vBlank {},vSyncOffset {},vSyncWidth {};
+};
+// DisplayID 1.x section in an EDID extension block; Type I (tag 0x03)
+// descriptors store every field minus one and 15-bit sync offsets.
+inline EDPPanelTiming displayIDTiming(const uint8_t *ext,size_t length,const EDPBootDepth &boot) {
+ EDPPanelTiming r;
+ if(!boot.valid || !ext || length<128 || ext[0]!=0x70)return r;
+ const size_t end=5+size_t(ext[2]);
+ if(end>length-2)return r; // section checksum and EDID checksum follow
+ for(size_t at=5;at+3<=end;) {
+  const uint8_t tag=ext[at],bytes=ext[at+2];
+  if(!tag && !bytes)break;
+  if(at+3+bytes>end)break;
+  if(tag==0x03 && bytes && !(bytes%20)) {
+   for(size_t t=at+3;t+20<=at+3+bytes;t+=20) {
+    const auto u16=[&](size_t o){return uint32_t(ext[t+o])|(uint32_t(ext[t+o+1])<<8);};
+    const uint64_t clock=(uint64_t(ext[t])|(uint64_t(ext[t+1])<<8)|(uint64_t(ext[t+2])<<16))+1;
+    const uint32_t ha=u16(4)+1,hb=u16(6)+1,ho=(u16(8)&0x7FFF)+1,hw=u16(10)+1;
+    const uint32_t va=u16(12)+1,vb=u16(14)+1,vo=(u16(16)&0x7FFF)+1,vw=u16(18)+1;
+    if(ha==boot.hActive && ha+hb==boot.hTotal && va==boot.vActive && va+vb==boot.vTotal) {
+     r.valid=true;r.clock=clock*10000;
+     r.hBlank=hb;r.hSyncOffset=ho;r.hSyncWidth=hw;r.vBlank=vb;r.vSyncOffset=vo;r.vSyncWidth=vw;
+     return r;
+    }
+   }
+  }
+  at+=3+bytes;
+ }
+ return r;
+}
+// Clone one unscaled native IODetailedTimingInformationV2 entry of the
+// installed mode list to the panel timing at RGB 6 bpc, with a new mode id.
+inline bool panelTimingClone(const uint8_t *src,size_t length,uint8_t *dst,const EDPBootDepth &boot,
+                             const EDPPanelTiming &panel,uint32_t id) {
+ if(!src || !dst || length<0xA0 || !boot.valid || !panel.valid)return false;
+ uint32_t ha,va,hs,vs;uint64_t clock;
+ memcpy(&ha,src+0x40,4);memcpy(&va,src+0x50,4);memcpy(&hs,src+0x18,4);memcpy(&vs,src+0x1C,4);
+ memcpy(&clock,src+0x28,8);
+ if(ha!=boot.hActive || va!=boot.vActive || hs || vs || clock==panel.clock)return false;
+ memcpy(dst,src,length);
+ memcpy(dst,&id,4);
+ memcpy(dst+0x28,&panel.clock,8);memcpy(dst+0x30,&panel.clock,8);memcpy(dst+0x38,&panel.clock,8);
+ memcpy(dst+0x44,&panel.hBlank,4);memcpy(dst+0x48,&panel.hSyncOffset,4);memcpy(dst+0x4C,&panel.hSyncWidth,4);
+ memcpy(dst+0x54,&panel.vBlank,4);memcpy(dst+0x58,&panel.vSyncOffset,4);memcpy(dst+0x5C,&panel.vSyncWidth,4);
+ const uint16_t encoding=1,depth=1;
+ memcpy(dst+0x88,&encoding,2);memcpy(dst+0x8A,&depth,2);
+ return true;
+}
 #endif

@@ -516,6 +516,8 @@ private:
 	mach_vm_address_t orgTGLModeTiming {};
 	mach_vm_address_t orgTGLValidateTiming {};
 	bool tglValidateTimingReady {false};
+	mach_vm_address_t orgTGLSetDetailedTimings {};
+	bool tglSetDetailedTimingsReady {false};
 	bool tglPanelDepthReady {false};
  bool display13PanelPWMReady {},display13PanelPowerReady {},display13PanelProbeReady {};
  mach_vm_address_t orgDisplay13PanelPower {};
@@ -541,6 +543,7 @@ private:
 	static uint32_t tglPanelDepthPort(void *port);
 	static void wrapTGLModeTiming(void *controller,void *fb,void *timing);
 	static IOReturn wrapTGLValidateTiming(void *fb,void *description,unsigned long long size);
+	static IOReturn wrapTGLSetDetailedTimings(void *fb,OSArray *array);
 	mach_vm_address_t orgTGLGamma10 {}, orgTGLRegisterWrite {}, orgTGLFastRegisterWrite {};
 	static void wrapTGLGamma10(void *path, void *transaction, uint32_t control);
 	static void wrapTGLRegisterWrite(void *access, unsigned long reg, uint32_t value);

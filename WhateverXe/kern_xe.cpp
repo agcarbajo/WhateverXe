@@ -258,6 +258,7 @@ static bool xelpDisplay13Device(IOPCIDevice *pci) {
 // receipts remain active in the ordinary AlderLakeN profile.
 // msi-e16flip: firmware eDP timing proven at 6 bpc (-wex-edp-boot-depth); [validate, modeset] hits.
 static EDPBootDepth edpBootDepth;
+static EDPPanelTiming edpPanelTiming; // DisplayID timing matching edpBootDepth (EDID extension block)
 static uint32_t edpBootDepthApplied[2];
 static bool display13TraceEnabled;
 // Out of line: adlnBootstrap has a bounded DEBUG kernel stack frame (tools/check_boot_stack.py).
@@ -13769,6 +13770,16 @@ void XE::processNativePanel(KernelPatcher &patcher,size_t index,mach_vm_address_
 				tglValidateTimingReady=known && patcher.routeMultiple(index,&route,1,address,size);
 				IORegistryEntry::getRegistryRoot()->setProperty("WEXEDPValidateTimingReady",tglValidateTimingReady);
 				patcher.clearError();
+				// The mode list itself: IOFBDetailedTimings plus the array kept at +0x4260.
+				const char *timings="__ZN21AppleIntelFramebuffer18setDetailedTimingsEP7OSArray";
+				const uint8_t timingsEntry[]={0x55,0x48,0x89,0xE5,0x41,0x56,0x53,0x49,0x89,0xF6,0x48,0x89,0xFB};
+				const auto timingsTarget=patcher.solveSymbol(index,timings,address,size);
+				const bool timingsKnown=tglValidateTimingReady && size>0x30D67 && timingsTarget==address+0x30D0E &&
+					!memcmp(reinterpret_cast<void *>(timingsTarget),timingsEntry,sizeof(timingsEntry));
+				KernelPatcher::RouteRequest timingsRoute(timings,wrapTGLSetDetailedTimings,orgTGLSetDetailedTimings);
+				tglSetDetailedTimingsReady=timingsKnown && patcher.routeMultiple(index,&timingsRoute,1,address,size);
+				IORegistryEntry::getRegistryRoot()->setProperty("WEXEDPTimingListReady",tglSetDetailedTimingsReady);
+				patcher.clearError();
 			}
 
    if(tglActive) {
@@ -17691,6 +17702,14 @@ uint32_t XE::tglPanelDepthPort(void *port) {
  return cfg[0];
 }
 void XE::cachePanelDepth(void *port,uint32_t block,const uint8_t *data,uint32_t result) {
+ if(block==2) {
+  // msi-e16flip: the firmware panel timing lives in the DisplayID extension block.
+  if(!result && data && edpBootDepth.valid && !edpPanelTiming.valid && tglPanelDepthPort(port)<=1) {
+   const auto panel=displayIDTiming(data,128,edpBootDepth);
+   if(panel.valid)edpPanelTiming=panel;
+  }
+  return;
+ }
  if(block!=1)return;const auto ddi=tglPanelDepthPort(port);if(ddi>1)return;
  const auto maximum=!result?TGLPanelDepth::maximum(data,128):0;
  IOSimpleLockLock(tglAUXLock);tglPanelDepthCache[ddi]={port,maximum};IOSimpleLockUnlock(tglAUXLock);
@@ -17735,6 +17754,43 @@ uint32_t XE::wrapTGLPortDDC(void *port, uint32_t block, uint8_t *data, bool forc
 		IORegistryEntry::getRegistryRoot()->setProperty(key, data, 128);
 	}
 	return r;
+}
+
+// msi-e16flip: macOS installs built-in panel modes from the base EDID block only.
+// Append an RGB 6 bpc clone of the unscaled native entry at the firmware panel
+// timing (DisplayID), so the refresh rate the firmware drives becomes selectable.
+IOReturn XE::wrapTGLSetDetailedTimings(void *fb,OSArray *array) {
+ OSArray *augmented=nullptr;
+ auto b=static_cast<uint8_t *>(fb);
+ if(b && array && edpBootDepth.valid && edpPanelTiming.valid) {
+  const auto slot=*reinterpret_cast<int32_t *>(b+0x3FD8)==-1 ? 0x49F0 : 0x4A08;
+  auto path=*reinterpret_cast<uint8_t **>(b+slot);
+  auto port=path ? *reinterpret_cast<void **>(path+0x3648) : nullptr;
+  const auto count=array->getCount();
+  uint32_t next=0;
+  for(unsigned i=0;i<count;++i) {
+   auto d=OSDynamicCast(OSData,array->getObject(i));uint32_t id=0;
+   if(d && d->getLength()>=4)memcpy(&id,d->getBytesNoCopy(),4);
+   if(id>=next)next=id+1;
+  }
+  if(port && tglPanelDepthPort(port)<=1 && next>0x80001000U && (augmented=OSArray::withCapacity(count+4))) {
+   uint32_t clones=0;
+   for(unsigned i=0;i<count;++i)augmented->setObject(array->getObject(i));
+   for(unsigned i=0;i<count;++i) {
+    auto d=OSDynamicCast(OSData,array->getObject(i));uint8_t entry[0x100];
+    if(!d || d->getLength()<0xA0 || d->getLength()>sizeof(entry) ||
+       !panelTimingClone(static_cast<const uint8_t *>(d->getBytesNoCopy()),d->getLength(),entry,edpBootDepth,edpPanelTiming,next))continue;
+    auto clone=OSData::withBytes(entry,d->getLength());
+    if(clone){augmented->setObject(clone);clone->release();++next;++clones;}
+   }
+   uint64_t proof[]={1,count,clones,edpPanelTiming.clock};
+   IORegistryEntry::getRegistryRoot()->setProperty("WEXEDPRefreshTimings",proof,sizeof(proof));
+   if(!clones)OSSafeReleaseNULL(augmented);
+  }
+ }
+ const auto result=FunctionCast(wrapTGLSetDetailedTimings,callbackXE->orgTGLSetDetailedTimings)(fb,augmented?augmented:array);
+ OSSafeReleaseNULL(augmented);
+ return result;
 }
 
 // msi-e16flip: IOFBDisplayModeDescription (0xCC) carries its V2 timing at +0x2C.
