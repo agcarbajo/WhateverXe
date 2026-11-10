@@ -46,6 +46,7 @@ struct XE {
  bool display13FramebufferRequested=false;
  Display13OutputWiring adlnOutputWiring;void *adlnPlatform=nullptr;
  static void cachePanelDepth(void*,uint32_t,const uint8_t*,uint32_t);
+ static void raisePublishedTimingRange(void *){}
 
  bool tglActive=true,tglPanelDepthReady=true,adlsDisplaySelected=false;
  AlderLakeS::Wiring adlsWiring;alignas(8) uint8_t tglPlatformCopy[0x1c0]{};
@@ -57,7 +58,7 @@ struct XE {
 } state,*callbackXE=&state;
 struct TGLPanelDepthCache {void *port;uint32_t maximum;};
 TGLPanelDepthCache tglPanelDepthCache[2];
-EDPBootDepth edpBootDepth;EDPPanelTiming edpPanelTiming;uint32_t edpBootDepthApplied[2];
+EDPBootDepth edpBootDepth;EDPPanelTiming edpPanelTiming;uint32_t edpBootDepthApplied[2];void *edpRangeFB;
 #define FunctionCast(f,p) reinterpret_cast<decltype(&f)>(p)
 PRODUCTION
 void native(void *,void *,void *){++calls;}
