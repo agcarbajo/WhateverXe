@@ -260,6 +260,7 @@ static bool xelpDisplay13Device(IOPCIDevice *pci) {
 static EDPBootDepth edpBootDepth;
 static EDPPanelTiming edpPanelTiming; // DisplayID timing matching edpBootDepth (EDID extension block)
 static uint32_t edpBootDepthApplied[2];
+static void *edpRangeFB; // internal panel framebuffer seen by the timing range wrappers
 static bool display13TraceEnabled;
 // Out of line: adlnBootstrap has a bounded DEBUG kernel stack frame (tools/check_boot_stack.py).
 static __attribute__((noinline)) void captureEDPBootDepth(IOPCIDevice *pci,const AlderLakeN::DisplayReadout &result,uint32_t panel) {
@@ -17724,7 +17725,7 @@ void XE::cachePanelDepth(void *port,uint32_t block,const uint8_t *data,uint32_t 
   // msi-e16flip: the firmware panel timing lives in the DisplayID extension block.
   if(!result && data && edpBootDepth.valid && !edpPanelTiming.valid && tglPanelDepthPort(port)<=1) {
    const auto panel=displayIDTiming(data,128,edpBootDepth);
-   if(panel.valid)edpPanelTiming=panel;
+   if(panel.valid){edpPanelTiming=panel;raisePublishedTimingRange(edpRangeFB);}
   }
   return;
  }
@@ -17819,12 +17820,29 @@ bool XE::edpPanelFramebuffer(void *fb) {
  auto port=path ? *reinterpret_cast<void **>(path+0x3648) : nullptr;
  return port && tglPanelDepthPort(port)<=1;
 }
+// msi-e16flip: the framebuffer publishes IOFBTimingRange on connection, before
+// the EDID (and so the DisplayID panel timing) is read. IOGraphics drops every
+// EDID timing above that maximum, so raise it in place and republish the range
+// as soon as the panel timing is known.
+void XE::raisePublishedTimingRange(void *fb) {
+ auto b=static_cast<uint8_t *>(fb);
+ if(!b || !edpPanelTiming.valid || !edpPanelFramebuffer(fb))return;
+ auto &maximum=*reinterpret_cast<uint64_t *>(b+0x4398);
+ const auto raised=panelMaxPixelClock(maximum,edpPanelTiming);
+ if(raised==maximum)return;
+ uint64_t proof[]={2,maximum,raised};
+ maximum=raised;
+ static_cast<IOService *>(fb)->setProperty("IOFBTimingRange",b+0x4370,0x138);
+ IORegistryEntry::getRegistryRoot()->setProperty("WEXEDPTimingRange",proof,sizeof(proof));
+}
 // msi-e16flip: raise the published pixel clock range to the firmware panel timing.
 void XE::wrapTGLInitTimingRange(void *fb,uint64_t minimum,uint64_t maximum) {
+ if(edpPanelFramebuffer(fb))edpRangeFB=fb;
  const auto raised=edpPanelTiming.valid && edpPanelFramebuffer(fb) ? panelMaxPixelClock(maximum,edpPanelTiming) : maximum;
  FunctionCast(wrapTGLInitTimingRange,callbackXE->orgTGLInitTimingRange)(fb,minimum,raised);
 }
 void XE::wrapTGLUpdateTimingRange(void *fb,uint64_t minimum,uint64_t maximum) {
+ if(edpPanelFramebuffer(fb))edpRangeFB=fb;
  const auto raised=edpPanelTiming.valid && edpPanelFramebuffer(fb) ? panelMaxPixelClock(maximum,edpPanelTiming) : maximum;
  if(raised!=maximum) {
   uint64_t proof[]={1,maximum,raised};

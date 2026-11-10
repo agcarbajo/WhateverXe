@@ -547,6 +547,7 @@ private:
 	static IOReturn wrapTGLValidateTiming(void *fb,void *description,unsigned long long size);
 	static IOReturn wrapTGLSetDetailedTimings(void *fb,OSArray *array);
 	static bool edpPanelFramebuffer(void *fb);
+	static void raisePublishedTimingRange(void *fb);
 	static void wrapTGLInitTimingRange(void *fb,uint64_t minimum,uint64_t maximum);
 	static void wrapTGLUpdateTimingRange(void *fb,uint64_t minimum,uint64_t maximum);
 	mach_vm_address_t orgTGLGamma10 {}, orgTGLRegisterWrite {}, orgTGLFastRegisterWrite {};
