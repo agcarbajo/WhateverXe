@@ -13780,6 +13780,24 @@ void XE::processNativePanel(KernelPatcher &patcher,size_t index,mach_vm_address_
 				tglSetDetailedTimingsReady=timingsKnown && patcher.routeMultiple(index,&timingsRoute,1,address,size);
 				IORegistryEntry::getRegistryRoot()->setProperty("WEXEDPTimingListReady",tglSetDetailedTimingsReady);
 				patcher.clearError();
+				// The published timing range (fb+0x4370) caps the panel at 720 MHz.
+				const char *initRange="__ZN21AppleIntelFramebuffer15initTimingRangeEyy";
+				const char *updateRange="__ZN21AppleIntelFramebuffer17updateTimingRangeEyy";
+				const uint8_t initEntry[]={0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x41,0x54,0x53,0x49,0x89,0xD7,0x49,0x89,0xF4,0x48,0x89,0xFB};
+				const uint8_t updateEntry[]={0x55,0x48,0x89,0xE5,0x41,0x57,0x41,0x56,0x53,0x50,0x48,0x89,0xFB};
+				const auto initTarget=patcher.solveSymbol(index,initRange,address,size);
+				const auto updateTarget=patcher.solveSymbol(index,updateRange,address,size);
+				const bool rangeKnown=tglSetDetailedTimingsReady && size>0x2EE10 &&
+					initTarget==address+0x2A676 && updateTarget==address+0x2EBF4 &&
+					!memcmp(reinterpret_cast<void *>(initTarget),initEntry,sizeof(initEntry)) &&
+					!memcmp(reinterpret_cast<void *>(updateTarget),updateEntry,sizeof(updateEntry));
+				KernelPatcher::RouteRequest rangeRoutes[] {
+					{initRange,wrapTGLInitTimingRange,orgTGLInitTimingRange},
+					{updateRange,wrapTGLUpdateTimingRange,orgTGLUpdateTimingRange}
+				};
+				tglTimingRangeReady=rangeKnown && patcher.routeMultiple(index,rangeRoutes,2,address,size);
+				IORegistryEntry::getRegistryRoot()->setProperty("WEXEDPTimingRangeReady",tglTimingRangeReady);
+				patcher.clearError();
 			}
 
    if(tglActive) {
@@ -17791,6 +17809,28 @@ IOReturn XE::wrapTGLSetDetailedTimings(void *fb,OSArray *array) {
  const auto result=FunctionCast(wrapTGLSetDetailedTimings,callbackXE->orgTGLSetDetailedTimings)(fb,augmented?augmented:array);
  OSSafeReleaseNULL(augmented);
  return result;
+}
+
+// msi-e16flip: the internal panel framebuffer, resolved like the donor does.
+bool XE::edpPanelFramebuffer(void *fb) {
+ auto b=static_cast<uint8_t *>(fb);if(!b)return false;
+ const auto slot=*reinterpret_cast<int32_t *>(b+0x3FD8)==-1 ? 0x49F0 : 0x4A08;
+ auto path=*reinterpret_cast<uint8_t **>(b+slot);
+ auto port=path ? *reinterpret_cast<void **>(path+0x3648) : nullptr;
+ return port && tglPanelDepthPort(port)<=1;
+}
+// msi-e16flip: raise the published pixel clock range to the firmware panel timing.
+void XE::wrapTGLInitTimingRange(void *fb,uint64_t minimum,uint64_t maximum) {
+ const auto raised=edpPanelTiming.valid && edpPanelFramebuffer(fb) ? panelMaxPixelClock(maximum,edpPanelTiming) : maximum;
+ FunctionCast(wrapTGLInitTimingRange,callbackXE->orgTGLInitTimingRange)(fb,minimum,raised);
+}
+void XE::wrapTGLUpdateTimingRange(void *fb,uint64_t minimum,uint64_t maximum) {
+ const auto raised=edpPanelTiming.valid && edpPanelFramebuffer(fb) ? panelMaxPixelClock(maximum,edpPanelTiming) : maximum;
+ if(raised!=maximum) {
+  uint64_t proof[]={1,maximum,raised};
+  IORegistryEntry::getRegistryRoot()->setProperty("WEXEDPTimingRange",proof,sizeof(proof));
+ }
+ FunctionCast(wrapTGLUpdateTimingRange,callbackXE->orgTGLUpdateTimingRange)(fb,minimum,raised);
 }
 
 // msi-e16flip: IOFBDisplayModeDescription (0xCC) carries its V2 timing at +0x2C.

@@ -80,6 +80,13 @@ inline EDPPanelTiming displayIDTiming(const uint8_t *ext,size_t length,const EDP
  }
  return r;
 }
+// The donor caps an internal panel's timing range at 720 MHz (getOnlineInfo);
+// IOFramebuffer clients drop any installed timing above it. Admit the panel
+// timing the firmware already drives, rounded up to the next MHz.
+inline uint64_t panelMaxPixelClock(uint64_t maximum,const EDPPanelTiming &panel) {
+ if(!panel.valid || maximum>=panel.clock)return maximum;
+ return (panel.clock+999999)/1000000*1000000;
+}
 // Clone one unscaled native IODetailedTimingInformationV2 entry of the
 // installed mode list to the panel timing at RGB 6 bpc, with a new mode id.
 inline bool panelTimingClone(const uint8_t *src,size_t length,uint8_t *dst,const EDPBootDepth &boot,

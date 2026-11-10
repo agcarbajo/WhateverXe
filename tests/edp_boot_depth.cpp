@@ -68,6 +68,9 @@ int main() {
  {uint8_t s[0xA0];timing(s,1920,160,1200,132,1,2);assert(!panelTimingClone(s,0xA0,clone,boot,panel,1));}
  assert(!panelTimingClone(clone,0xA0,native,boot,panel,1));
  assert(!panelTimingClone(native,0x9F,clone,boot,panel,1) && !panelTimingClone(native,0xA0,clone,boot,EDPPanelTiming{},1));
+ assert(panelMaxPixelClock(720000000ULL,panel)==778000000ULL);
+ assert(panelMaxPixelClock(940000000ULL,panel)==940000000ULL);
+ assert(panelMaxPixelClock(720000000ULL,EDPPanelTiming{})==720000000ULL);
  puts("PASS eDP boot depth: exact firmware 6 bpc timing only, RGB/unspecified encodings, idempotent");
  puts("PASS eDP panel timing: DisplayID Type I parse and native 60 Hz entry clone at 6 bpc");
 }
