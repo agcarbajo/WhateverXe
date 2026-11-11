@@ -261,6 +261,10 @@ static EDPBootDepth edpBootDepth;
 static EDPPanelTiming edpPanelTiming; // DisplayID timing matching edpBootDepth (EDID extension block)
 static uint32_t edpBootDepthApplied[2];
 static void *edpRangeFB; // internal panel framebuffer seen by the timing range wrappers
+// -wex-edp-8bpc: keep the panel timing and range, but let the donor pick the depth.
+static bool edpKeepDepth;
+// Panel DPCD as the donor reads/writes it: 0x000-0x11F, then 0x700-0x71F at +0x120. No extra AUX IO.
+static uint8_t edpDPCD[0x140];
 static bool display13TraceEnabled;
 // Out of line: adlnBootstrap has a bounded DEBUG kernel stack frame (tools/check_boot_stack.py).
 static __attribute__((noinline)) void captureEDPBootDepth(IOPCIDevice *pci,const AlderLakeN::DisplayReadout &result,uint32_t panel) {
@@ -4136,8 +4140,10 @@ void XE::adlnBootstrap(IOPCIDevice *pci) {
 		connector[5]=bootDDI;pci->setProperty("N97NativeBootConnector",connector,sizeof(connector));
 	}
 	pci->setProperty("N97DisplayReadoutStatus", static_cast<uint32_t>(result.status), 32);
-    if(displayRequested && board.panel && checkKernelArgument("-wex-edp-boot-depth"))
+    if(displayRequested && board.panel && checkKernelArgument("-wex-edp-boot-depth")) {
+        edpKeepDepth=checkKernelArgument("-wex-edp-8bpc");
         captureEDPBootDepth(pci,result,board.panel);
+    }
 	SYSLOG("igfx", "AlderLakeN Display13 readout status=%u powered=%x active=%x hdmiB=%x; donor blocked",
 		static_cast<uint32_t>(result.status), result.poweredPipes, result.activePipes, result.hdmiBPipes);
 	// Mobile and TC configurations adopt a validated firmware surface at
@@ -7386,6 +7392,7 @@ uint32_t XE::wrapDisplay13ReadAUX(void *port,uint32_t address,void *data,uint32_
  if(!ready)return kIOReturnNotReady;
  const auto r=FunctionCast(wrapDisplay13ReadAUX,callbackXE->orgDisplay13ReadAUX)(port,address,data,length);
  IOLockLock(c.lock);const bool complete=display13AUXReady(port,false);IOLockUnlock(c.lock);
+ if(!r && complete)edpDPCDShadow(port,address,data,length);
  return r ? r : complete ? 0 : kIOReturnNotReady;
 }
 uint32_t XE::wrapDisplay13WriteAUX(void *port,uint32_t address,void *data,uint32_t length) {
@@ -7394,7 +7401,18 @@ uint32_t XE::wrapDisplay13WriteAUX(void *port,uint32_t address,void *data,uint32
  if(!ready)return kIOReturnNotReady;
  const auto r=FunctionCast(wrapDisplay13WriteAUX,callbackXE->orgDisplay13WriteAUX)(port,address,data,length);
  IOLockLock(c.lock);const bool complete=display13AUXReady(port,false);IOLockUnlock(c.lock);
+ if(!r && complete)edpDPCDShadow(port,address,data,length);
  return r ? r : complete ? 0 : kIOReturnNotReady;
+}
+// msi-e16flip: shadow the internal panel's DPCD capability/link registers.
+void XE::edpDPCDShadow(void *port,uint32_t address,const void *data,uint32_t length) {
+ if(!data || !length || length>16 || tglPanelDepthPort(port)>1)return;
+ size_t at;
+ if(address+length<=0x120)at=address;
+ else if(address>=0x700 && address+length<=0x720)at=0x120+address-0x700;
+ else return;
+ memcpy(edpDPCD+at,data,length);
+ IORegistryEntry::getRegistryRoot()->setProperty("WEXEDPDPCD",edpDPCD,sizeof(edpDPCD));
 }
 uint32_t XE::wrapDisplay13I2CAUX(void *port,uint32_t command,uint32_t *packet,uint32_t length,uint8_t flag) {
  auto &c=display13FBPower;if(!c.lock)return kIOReturnNotReady;
@@ -17753,7 +17771,7 @@ void XE::wrapTGLModeTiming(void *controller,void *fb,void *timing) {
  auto &depth=*reinterpret_cast<uint16_t *>(t+0x8A);
  const auto before=depth;
  depth=TGLPanelDepth::clamp(encoding,before,maximum);
- if(edpBootDepth.apply(t)) {
+ if(!edpKeepDepth && edpBootDepth.apply(t)) {
   ++edpBootDepthApplied[1];
   IORegistryEntry::getRegistryRoot()->setProperty("WEXEDPBootDepthApplied",edpBootDepthApplied,sizeof(edpBootDepthApplied));
  }
@@ -17859,7 +17877,7 @@ IOReturn XE::wrapTGLValidateTiming(void *fb,void *description,unsigned long long
   const auto slot=*reinterpret_cast<int32_t *>(b+0x3FD8)==-1 ? 0x49F0 : 0x4A08;
   auto path=*reinterpret_cast<uint8_t **>(b+slot);
   auto port=path ? *reinterpret_cast<void **>(path+0x3648) : nullptr;
-  if(port && tglPanelDepthPort(port)<=1 && edpBootDepth.apply(d+0x2C)) {
+  if(port && !edpKeepDepth && tglPanelDepthPort(port)<=1 && edpBootDepth.apply(d+0x2C)) {
    ++edpBootDepthApplied[0];
    IORegistryEntry::getRegistryRoot()->setProperty("WEXEDPBootDepthApplied",edpBootDepthApplied,sizeof(edpBootDepthApplied));
   }

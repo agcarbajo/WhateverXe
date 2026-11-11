@@ -58,7 +58,7 @@ struct XE {
 } state,*callbackXE=&state;
 struct TGLPanelDepthCache {void *port;uint32_t maximum;};
 TGLPanelDepthCache tglPanelDepthCache[2];
-EDPBootDepth edpBootDepth;EDPPanelTiming edpPanelTiming;uint32_t edpBootDepthApplied[2];void *edpRangeFB;
+EDPBootDepth edpBootDepth;EDPPanelTiming edpPanelTiming;uint32_t edpBootDepthApplied[2];void *edpRangeFB;bool edpKeepDepth;
 #define FunctionCast(f,p) reinterpret_cast<decltype(&f)>(p)
 PRODUCTION
 void native(void *,void *,void *){++calls;}

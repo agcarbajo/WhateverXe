@@ -207,6 +207,7 @@ private:
  bool processDisplay13FramebufferAUX(KernelPatcher &,size_t,mach_vm_address_t,size_t);
  static bool display13AUXReady(void *port,bool command,bool retained=false);
  static uint32_t wrapDisplay13ReadAUX(void *port,uint32_t address,void *data,uint32_t length);
+ static void edpDPCDShadow(void *port,uint32_t address,const void *data,uint32_t length);
  static uint32_t wrapDisplay13WriteAUX(void *port,uint32_t address,void *data,uint32_t length);
  static uint32_t wrapDisplay13I2CAUX(void *port,uint32_t command,uint32_t *packet,uint32_t length,uint8_t flag);
  static uint32_t wrapDisplay13RunAUX(void *port,uint32_t command,uint32_t *packet,uint32_t length,bool flag);

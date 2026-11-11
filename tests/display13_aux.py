@@ -9,6 +9,8 @@ functions='\n'.join(re.search(re.escape(sig)+r'.*?\n\}',s,re.S).group() for sig 
  'uint32_t XE::wrapDisplay13SignalLevels(', 'uint32_t XE::wrapDisplay13TrainingPattern(',
  'bool XE::display13AUXReady(', 'uint32_t XE::wrapDisplay13ReadAUX(', 'uint32_t XE::wrapDisplay13WriteAUX(',
  'uint32_t XE::wrapDisplay13I2CAUX(', 'uint32_t XE::wrapDisplay13RunAUX('])
+# The panel DPCD shadow only publishes evidence; it is stubbed here.
+functions='void XE::edpDPCDShadow(void *,uint32_t,const void *,uint32_t){}\n'+functions
 binding=re.search(r'static TGLFBBinding::Readout adlnInspectPathBinding\(.*?\n\}',s,re.S).group()
 objects=(r/'tests/tgl_fb_binding.cpp').read_text().split('int main()')[0].replace('port[0x580]','port[0x700]')
 base=(r/'tests/display13_sst_fixture.cpp').read_text().split('int main(')[0]
