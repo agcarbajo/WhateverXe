@@ -147,6 +147,7 @@
   "-wex-adlp-readout": [],
   "-wex-hidpi-dbuf": [],
   "-wex-edp-boot-depth": [],
+  "-wex-edp-8bpc": [],
   "-wex-scanout-coherent": [],
   "-wex-adlp-load-only": [],
   "-wex-display13-offline": [],

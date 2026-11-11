@@ -9870,6 +9870,21 @@ void XE::wrapDisplay13WMArmUpdate(IOService *fb) {
     display13WMArmUpdate(fb);
 }
 
+// msi-e16flip: read-only pipe scaler, PIPE_MISC (dither), plane, DBUF and CDCLK
+// state after each WM latch, to tell a scaler programming fault from a bandwidth
+// one. Out of line: display13WMArmUpdate has a bounded DEBUG stack frame.
+static __attribute__((noinline)) void publishPipeRegs(IOMemoryMap *map,unsigned pipe) {
+	Display13FBDBUFIO io {map};
+	if(pipe>=3 || !io.readable(0x45404) || !Display13FBIRQ::powered(io.read(0x45404),pipe))return;
+	const uint32_t bank=0x1000*pipe,ps=0x800*pipe;
+	const uint32_t list[]={0x68180+ps,0x68170+ps,0x68174+ps,0x68280+ps,0x68270+ps,0x68274+ps,
+		0x6001C+bank,0x70030+bank,0x70180+bank,0x70190+bank,0x60400+bank,0x45270+4*pipe,
+		0x45008,0x44FE8,0x46000,0x44408+0x10*pipe};
+	uint32_t snap[2+arrsize(list)] {1,pipe};
+	for(unsigned i=0;i<arrsize(list);++i)snap[2+i]=io.read(list[i]);
+	char key[24];snprintf(key,sizeof(key),"WEXPipe%uRegs",pipe);
+	IORegistryEntry::getRegistryRoot()->setProperty(key,snap,sizeof(snap));
+}
 void XE::display13WMArmUpdate(IOService *fb) {
 	auto &c=display13FBPower;bool owner=false;
 	const auto pipe=Display13FBMemory::boundPipe(c.pipe,fb);
@@ -10080,6 +10095,7 @@ void XE::display13WMArmUpdate(IOService *fb) {
 	auto root=IORegistryEntry::getRegistryRoot();char property[48];
 	snprintf(property,sizeof(property),"N97FBPipe%uWMTriggerSurfaces",pipe);root->setProperty(property,trigger,sizeof(trigger));
 	snprintf(property,sizeof(property),"N97FBPipe%uWMLatch",pipe);root->setProperty(property,record,sizeof(record));
+	publishPipeRegs(c.map,pipe);
 }
 
 bool XE::enableDisplay13EngineLocked(void *power) {
